@@ -2,7 +2,11 @@
 #  AquaSense API — FastAPI Backend
 #  Simulated Annealing দিয়ে Water Quality Analysis
 # ============================================================
-
+import os
+import base64
+import google.generativeai as genai
+from firebase_admin import credentials, firestore, initialize_app
+import firebase_admin
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -445,6 +449,196 @@ def analyze_weekly(data: WeeklyData):
     result['note'] = 'QuantumCycle: ভবিষ্যতে এটা IBM Quantum এ চলবে'
 
     return result
+
+
+
+
+
+
+
+# ============================================================
+#  এই code টা তোমার main.py এর একদম শেষে যুক্ত করবে
+#  (if __name__ == "__main__": এর আগে)
+# ============================================================
+
+
+
+# ── Gemini Setup ──
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# ── Firebase Admin Setup (quota tracking এর জন্য) ──
+# Firestore এ quota save করবো
+def get_firestore_client():
+    try:
+        if not firebase_admin._apps:
+            # Service account JSON Render env variable থেকে নেবে
+            import json
+            service_account_info = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "")
+            if service_account_info:
+                cred = credentials.Certificate(json.loads(service_account_info))
+                initialize_app(cred)
+        return firestore.client()
+    except Exception:
+        return None
+
+# ── Fish Symptom Analysis Endpoint ──
+@app.post("/api/fish-symptom")
+async def analyze_fish_symptom(
+    image: UploadFile = File(...),
+    pond_id: str = Form(default="unknown"),
+    user_id: str = Form(default="unknown"),
+):
+    """
+    Flutter app থেকে মাছের ছবি আসবে
+    Gemini AI দিয়ে disease detect করবে
+    Firestore এ quota update করবে
+    """
+
+    if not GEMINI_API_KEY:
+        return {
+            "success": False,
+            "error": "Gemini API key নেই। Admin প্যানেল থেকে key set করুন।"
+        }
+
+    try:
+        # ── ছবি পড়ো ──
+        image_bytes = await image.read()
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+        # ── Gemini Model ──
+        model = genai.GenerativeModel('gemini-1.5-flash')
+
+        # ── Prompt — বাংলায় result চাই ──
+        prompt = """
+        তুমি একজন বিশেষজ্ঞ মৎস্য রোগ বিশেষজ্ঞ। এই মাছের ছবি দেখে বিশ্লেষণ করো।
+
+        নিচের JSON format এ উত্তর দাও (শুধু JSON, অন্য কিছু না):
+        {
+            "disease_detected": true/false,
+            "disease_name": "রোগের নাম ইংরেজিতে",
+            "disease_name_bangla": "রোগের নাম বাংলায়",
+            "confidence": 85,
+            "symptoms_found": ["লক্ষণ ১", "লক্ষণ ২"],
+            "cause": "কারণ বাংলায়",
+            "treatment": ["চিকিৎসা ১", "চিকিৎসা ২", "চিকিৎসা ৩"],
+            "prevention": ["প্রতিরোধ ১", "প্রতিরোধ ২"],
+            "urgency": "high/medium/low",
+            "recommendation": "সংক্ষিপ্ত পরামর্শ বাংলায়",
+            "is_healthy": true/false
+        }
+
+        যদি মাছ সুস্থ থাকে:
+        - disease_detected: false
+        - is_healthy: true
+        - disease_name_bangla: "মাছ সুস্থ আছে"
+
+        যদি ছবিতে মাছ না থাকে:
+        - disease_detected: false  
+        - disease_name_bangla: "মাছের ছবি পাওয়া যায়নি"
+        - recommendation: "মাছের স্পষ্ট ছবি তুলুন"
+        """
+
+        # ── Gemini API Call ──
+        response = model.generate_content([
+            prompt,
+            {
+                "mime_type": image.content_type or "image/jpeg",
+                "data": image_base64
+            }
+        ])
+
+        # ── Response Parse করো ──
+        import json
+        import re
+
+        response_text = response.text.strip()
+
+        # JSON extract করো (markdown code block থাকলে সরাও)
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            result_data = json.loads(json_match.group())
+        else:
+            result_data = json.loads(response_text)
+
+        # ── Firestore এ Quota Update করো ──
+        try:
+            db = get_firestore_client()
+            if db:
+                quota_ref = db.collection('ai_usage').document('fish_symptom_quota')
+                quota_ref.set({
+                    'total_calls': firestore.Increment(1),
+                    'last_used': firestore.SERVER_TIMESTAMP,
+                    'last_pond_id': pond_id,
+                    'last_user_id': user_id,
+                }, merge=True)
+
+                # Per-user tracking
+                user_ref = db.collection('ai_usage').document(f'user_{user_id}')
+                user_ref.set({
+                    'fish_symptom_calls': firestore.Increment(1),
+                    'last_used': firestore.SERVER_TIMESTAMP,
+                }, merge=True)
+        except Exception as quota_err:
+            # Quota update fail হলেও result return করো
+            print(f"Quota update error: {quota_err}")
+
+        return {
+            "success": True,
+            "analysis": result_data,
+            "model": "gemini-1.5-flash",
+        }
+
+    except json.JSONDecodeError:
+        # Gemini valid JSON না দিলে raw text parse করার চেষ্টা
+        return {
+            "success": True,
+            "analysis": {
+                "disease_detected": False,
+                "disease_name_bangla": "বিশ্লেষণ সম্পন্ন",
+                "confidence": 70,
+                "symptoms_found": [],
+                "treatment": ["মৎস্য বিশেষজ্ঞের পরামর্শ নিন"],
+                "prevention": ["নিয়মিত পর্যবেক্ষণ করুন"],
+                "urgency": "low",
+                "recommendation": response.text[:200] if response.text else "ছবি আরও স্পষ্ট করে তুলুন",
+                "is_healthy": True,
+            },
+            "model": "gemini-1.5-flash",
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"বিশ্লেষণে সমস্যা হয়েছে: {str(e)}"
+        }
+
+
+# ── Quota Status Endpoint (Admin Panel এর জন্য) ──
+@app.get("/api/quota-status")
+def quota_status():
+    """Admin Panel এ quota দেখানোর জন্য"""
+    try:
+        db = get_firestore_client()
+        if db:
+            doc = db.collection('ai_usage').document('fish_symptom_quota').get()
+            if doc.exists:
+                return {"success": True, "quota": doc.to_dict()}
+        return {"success": True, "quota": {"total_calls": 0}}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     import uvicorn
