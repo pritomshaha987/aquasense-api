@@ -7,7 +7,7 @@ import base64
 import google.generativeai as genai
 from firebase_admin import credentials, firestore, initialize_app
 import firebase_admin
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
