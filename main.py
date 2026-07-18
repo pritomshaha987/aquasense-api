@@ -3,6 +3,8 @@
 #  Simulated Annealing দিয়ে Water Quality Analysis
 # ============================================================
 import os
+import json          # ← নতুন লাইন যোগ করো
+import re  
 import base64
 import google.generativeai as genai
 from firebase_admin import credentials, firestore, initialize_app
@@ -508,7 +510,7 @@ async def analyze_fish_symptom(
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
         # ── Gemini Model ──
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
 
         # ── Prompt — বাংলায় result চাই ──
         prompt = """
@@ -549,10 +551,6 @@ async def analyze_fish_symptom(
             }
         ])
 
-        # ── Response Parse করো ──
-        import json
-        import re
-
         response_text = response.text.strip()
 
         # JSON extract করো (markdown code block থাকলে সরাও)
@@ -587,7 +585,7 @@ async def analyze_fish_symptom(
         return {
             "success": True,
             "analysis": result_data,
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.0-flash",
         }
 
     except json.JSONDecodeError:
@@ -605,7 +603,7 @@ async def analyze_fish_symptom(
                 "recommendation": response.text[:200] if response.text else "ছবি আরও স্পষ্ট করে তুলুন",
                 "is_healthy": True,
             },
-            "model": "gemini-1.5-flash",
+            "model": "gemini-2.0-flash",
         }
 
     except Exception as e:
