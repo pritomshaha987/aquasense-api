@@ -561,25 +561,32 @@ async def analyze_fish_symptom(
             result_data = json.loads(response_text)
 
         # ── Firestore এ Quota Update করো ──
+        # ── Firestore এ Quota Update করো (Admin Dashboard এর সাথে path মিলিয়ে) ──
         try:
             db = get_firestore_client()
             if db:
-                quota_ref = db.collection('ai_usage').document('fish_symptom_quota')
-                quota_ref.set({
+                ai_config_ref = db.collection('config').document('aiEngine')
+                ai_config_ref.set({
+                    'quotaUsed': firestore.Increment(1),
+                    'lastUsed': firestore.SERVER_TIMESTAMP,
+                    'status': 'active',
+                }, merge=True)
+
+                # ── আলাদা collection এ detailed log ও রাখলাম (future analytics এর জন্য) ──
+                usage_ref = db.collection('ai_usage').document('fish_symptom_quota')
+                usage_ref.set({
                     'total_calls': firestore.Increment(1),
                     'last_used': firestore.SERVER_TIMESTAMP,
                     'last_pond_id': pond_id,
                     'last_user_id': user_id,
                 }, merge=True)
 
-                # Per-user tracking
                 user_ref = db.collection('ai_usage').document(f'user_{user_id}')
                 user_ref.set({
                     'fish_symptom_calls': firestore.Increment(1),
                     'last_used': firestore.SERVER_TIMESTAMP,
                 }, merge=True)
         except Exception as quota_err:
-            # Quota update fail হলেও result return করো
             print(f"Quota update error: {quota_err}")
 
         return {
