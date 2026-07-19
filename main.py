@@ -510,7 +510,7 @@ async def analyze_fish_symptom(
         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
 
         # ── Gemini Model ──
-        model = genai.GenerativeModel('gemini-2.0-flash-lite')
+        model = genai.GenerativeModel('gemini-2.5-flash-lite')
 
         # ── Prompt — বাংলায় result চাই ──
         prompt = """
@@ -585,7 +585,7 @@ async def analyze_fish_symptom(
         return {
             "success": True,
             "analysis": result_data,
-            "model": "gemini-2.0-flash-lite",
+            "model": "gemini-2.5-flash-lite",
         }
 
     except json.JSONDecodeError:
@@ -603,7 +603,7 @@ async def analyze_fish_symptom(
                 "recommendation": response.text[:200] if response.text else "ছবি আরও স্পষ্ট করে তুলুন",
                 "is_healthy": True,
             },
-            "model": "gemini-2.0-flash-lite",
+            "model": "gemini-2.5-flash-lite",
         }
 
     except Exception as e:
